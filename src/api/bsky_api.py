@@ -82,12 +82,12 @@ def handle_event(event: Event):
             text = event.data.get('text')
             if not text:
                 raise ValueError('Text is required for a post event')
-            post(text, event.data.get('photo'))
+            post(text, event.data.get('image'))
         elif event.eventType == EventType.Profile_Update:
             update_profile(
                 event.data.get('name', None),
                 event.data.get('description', None),
-                event.data.get('photo', None),
+                event.data.get('image', None),
                 event.data.get('banner', None)
             )
         else:

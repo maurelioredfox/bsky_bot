@@ -159,7 +159,7 @@ def load(app: Application) -> None:
                                     CallbackQueryHandler(update_image, pattern="^(image|banner)$")],
             UPDATE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_update)],
             UPDATE_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, send_update),
-                           MessageHandler(filters.TEXT & filters.Regex('^noimage$') & ~filters.COMMAND, send_update)]
+                           MessageHandler((filters.TEXT | filters.Regex('^noimage$')) & ~filters.COMMAND, send_update)]
         },
         fallbacks=[CommandHandler("stop", stop)]
     )

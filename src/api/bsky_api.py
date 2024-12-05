@@ -71,24 +71,30 @@ class EventType:
     Post = 'post'
     Profile_Update = 'profile_update'
 
-@dataclass
+class EventData:
+    text: str
+    image: str #(base64)
+    name: str
+    description: str
+    banner: str #(base64)
+
 class Event:
     eventType: EventType
-    data: dict
+    data: EventData
 
 def handle_event(event: Event):
     try:
         if event.eventType == EventType.Post:
-            text = event.data.get('text')
+            text = event.data.text
             if not text:
                 raise ValueError('Text is required for a post event')
-            post(text, event.data.get('image'))
+            post(text, event.data.image)
         elif event.eventType == EventType.Profile_Update:
             update_profile(
-                event.data.get('name', None),
-                event.data.get('description', None),
-                event.data.get('image', None),
-                event.data.get('banner', None)
+                event.data.name,
+                event.data.description,
+                event.data.image,
+                event.data.banner
             )
         else:
             raise ValueError(f'Unknown event type: {event.eventType}')

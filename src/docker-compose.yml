@@ -11,6 +11,8 @@ services:
         - BSKY_PASSWORD=${BSKY_PASSWORD}
         - RABBIT_USER=${RABBIT_USER}
         - RABBIT_PASSWORD=${RABBIT_PASSWORD}
+        - TELEGRAM_TOKEN_BSKY=${TELEGRAM_TOKEN_BSKY}
+        - ADMIN_ID=${ADMIN_ID}
     networks:
       - mongodb_default
 networks:

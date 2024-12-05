@@ -120,6 +120,12 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     event = Event()
     event.eventType = EventType.Profile_Update
     event.data = EventData()
+    event.data.text = None
+    event.data.name = None
+    event.data.description = None
+    event.data.image = None
+    event.data.banner = None
+    
     if update_type == 'name':
         event.data.name = text
     elif update_type == 'description':

@@ -146,7 +146,10 @@ def load(app: Application) -> None:
         entry_points=[CommandHandler("bluesky_post", bsky_post)],
         states={
             STATE_POST: [MessageHandler(filters.TEXT & ~filters.COMMAND, bsky_post_image)],
-            STATE_POST_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_send)]
+            STATE_POST_IMAGE: [
+                MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_send),
+                MessageHandler(filters.TEXT & filters.Regex('^noimage$'), bsky_post_send)
+            ]
         },
         fallbacks=[CommandHandler("stop", stop)]
     )
@@ -158,8 +161,7 @@ def load(app: Application) -> None:
             SELECT_WHAT_TO_UPDATE: [CallbackQueryHandler(update_text, pattern="^(name|description)$"), 
                                     CallbackQueryHandler(update_image, pattern="^(image|banner)$")],
             UPDATE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_update)],
-            UPDATE_IMAGE: [MessageHandler((filters.PHOTO | filters.Regex('^noimage$')) & ~filters.COMMAND, send_update),
-                           MessageHandler(filters.TEXT  & ~filters.COMMAND, send_update)]
+            UPDATE_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, send_update)]
         },
         fallbacks=[CommandHandler("stop", stop)]
     )

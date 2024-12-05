@@ -1,0 +1,16 @@
+version: '3'
+services:
+  textbot:
+    container_name: BskyBot
+    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BSKY_USERNAME=${BSKY_USERNAME}
+        - BSKY_PASSWORD=${BSKY_PASSWORD}
+    networks:
+      - mongodb_default
+networks:
+  mongodb_default:
+    external: true

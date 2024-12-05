@@ -18,7 +18,7 @@ def callback(ch, method, properties, body):
 
 def main():
     credentials = pika.PlainCredentials(rabbit_user, rabbit_password)
-    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost', credentials=credentials))
+    connection = pika.BlockingConnection(pika.ConnectionParameters('orange-rabbit', credentials=credentials))
     channel = connection.channel()
 
     channel.queue_declare(queue='bsky_update_queue')

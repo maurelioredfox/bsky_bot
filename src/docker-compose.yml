@@ -1,6 +1,6 @@
 version: '3'
 services:
-  textbot:
+  bskybot:
     container_name: BskyBot
     restart: always
     build:

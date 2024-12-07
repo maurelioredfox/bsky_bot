@@ -8,7 +8,7 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-ENV BSKY_DATABASE=bsky_bot
+ENV BSKY_BOT_DATABASE=bsky_bot
 ENV MONGO_HOST=mongo
 ENV MONGO_PORT=27017
 

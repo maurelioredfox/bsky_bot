@@ -1,7 +1,7 @@
 version: '3'
 services:
   bskybottelegram:
-    container_name: BskyBotTelegram
+    container_name: BskyTelegramBot
     restart: always
     build:
       context: .

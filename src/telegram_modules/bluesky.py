@@ -8,10 +8,6 @@ import base64
 from api.bsky_api import Event, EventType, EventData, handle_event
 from dal import db
 
-RABBITMQ_HOST = os.getenv('RABBITMQ_HOST')
-RABBITMQ_USER = os.getenv('RABBITMQ_USER')
-RABBITMQ_PASS = os.getenv('RABBITMQ_PASS')
-
 #flags
 STATE_POST, STATE_POST_IMAGE, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(5)
 

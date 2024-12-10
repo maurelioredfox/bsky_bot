@@ -74,7 +74,7 @@ def post(text: str, photo: str):
         image: Image = Image.open(BytesIO(photo_data))
         aspect_ratio = models.AppBskyEmbedDefs.AspectRatio(height=image.height, width=image.width)
         post = client.send_image(
-            text=text,
+            text=text or "",
             image=photo_data,
             image_alt=f'{text or "no post text"} - sent from a Python bot',
             image_aspect_ratio= aspect_ratio

@@ -45,7 +45,7 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = "Add or change text/image, or send the post"
     
     keyboard = [[
-        InlineKeyboardButton('Text', callback_data='post_ext'), 
+        InlineKeyboardButton('Text', callback_data='post_text'), 
         InlineKeyboardButton('Image', callback_data='post_image')
         ]]
     
@@ -90,7 +90,7 @@ async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text('Please, try again and provide text or image.')
         return ConversationHandler.END
     context.user_data.clear()
-
+ 
     event = Event()
     event.eventType = EventType.Post
     event.data = EventData()
@@ -204,12 +204,14 @@ async def update_profile(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def update_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['update'] = update.callback_query.data
-    await update.callback_query.message.reply_text('Please, provide the new text')
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text('Please, provide the new text')
     return UPDATE_TEXT
 
 async def update_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['update'] = update.callback_query.data
-    await update.callback_query.message.reply_text('Please, provide the new image')
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text('Please, provide the new image')
     return UPDATE_IMAGE
 
 async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

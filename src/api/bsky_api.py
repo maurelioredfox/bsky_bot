@@ -76,7 +76,7 @@ def post(text: str, photo: str):
         post = client.send_image(
             text=text,
             image=photo_data,
-            image_alt=f'{text} - sent from a Python bot',
+            image_alt=f'{text or "no post text"} - sent from a Python bot',
             image_aspect_ratio= aspect_ratio
         )
         db.Posts(text=text, cid=post.cid, uri=post.uri).save()
@@ -130,8 +130,8 @@ async def handle_event(event: Event):
         match event.eventType:
             case EventType.Post:
                 text = event.data.text
-                if not text:
-                    raise ValueError('Text is required for a post event')
+                if not text and not event.data.image:
+                    raise ValueError('Text or Image is required for a post event')
                 post(text, event.data.image)
 
             case EventType.List:

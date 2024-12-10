@@ -45,7 +45,7 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = "Add or change text/image, or send the post"
     
     keyboard = [[
-        InlineKeyboardButton('Text', callback_data='post_ext'), 
+        InlineKeyboardButton('Text', callback_data='post_text'), 
         InlineKeyboardButton('Image', callback_data='post_image')
         ]]
     

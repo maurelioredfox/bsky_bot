@@ -55,11 +55,11 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if update.message:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else :
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     return STATE_POST_KEYBOARD_CALLBACK
 
 async def bsky_post_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.message.reply_text('Please, provide the text for the post')
+    await update.callback_query.edit_message_text('Please, provide the text for the post')
     return STATE_POST_TEXT
 
 async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -67,7 +67,7 @@ async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_
     return await bsky_post_keyboard(update, context)
 
 async def bsky_post_image(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.message.reply_text('Please, provide the image for the post')
+    await update.callback_query.edit_message_text('Please, provide the image for the post')
     return STATE_POST_IMAGE
 
 async def bsky_post_image_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -101,7 +101,7 @@ async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     event.data.image = image_base64
     await handle_event(event)
 
-    await update.message.reply_text('Post sent')
+    await update.callback_query.edit_message_text('Post sent')
     return ConversationHandler.END
 
 # endregion
@@ -207,12 +207,12 @@ async def update_profile(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def update_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['update'] = update.callback_query.data
-    await update.callback_query.message.reply_text('Please, provide the new text')
+    await update.callback_query.edit_message_text('Please, provide the new text')
     return UPDATE_TEXT
 
 async def update_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['update'] = update.callback_query.data
-    await update.callback_query.message.reply_text('Please, provide the new image')
+    await update.callback_query.edit_message_text('Please, provide the new image')
     return UPDATE_IMAGE
 
 async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -244,8 +244,8 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     elif update_type == 'banner':
         event.data.banner = image_base64
 
-    await update.message.reply_text('Update sent')
     await handle_event(event)
+    await update.message.reply_text('Update sent')
     return ConversationHandler.END
 
 # endregion

@@ -52,11 +52,14 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if context.user_data.get('post_text') or context.user_data.get('post_image'):
         keyboard.append([InlineKeyboardButton('Send', callback_data='post_send')])
 
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    if update.message:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else :
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     return STATE_POST_KEYBOARD_CALLBACK
 
 async def bsky_post_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text('Please, provide the text for the post')
+    await update.callback_query.message.reply_text('Please, provide the text for the post')
     return STATE_POST_TEXT
 
 async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -64,7 +67,7 @@ async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_
     return await bsky_post_keyboard(update, context)
 
 async def bsky_post_image(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text('Please, provide the image for the post')
+    await update.callback_query.message.reply_text('Please, provide the image for the post')
     return STATE_POST_IMAGE
 
 async def bsky_post_image_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

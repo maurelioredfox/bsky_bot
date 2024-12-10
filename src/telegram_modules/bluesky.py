@@ -9,7 +9,7 @@ from api.bsky_api import Event, EventType, EventData, handle_event
 from dal import db
 
 #flags
-STATE_POST, STATE_POST_IMAGE, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(5)
+STATE_POST_TEXT, STATE_POST_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(6)
 
 async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user.id == int(os.getenv('ADMIN_ID')):
@@ -31,20 +31,51 @@ async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> N
 
 # region post
 
-async def bsky_post(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
         await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
         return ConversationHandler.END
     
-    await update.message.reply_text('Please, provide the text for the post')
-    return STATE_POST
+    text = ""
+    if not (context.user_data.get('post_text') or context.user_data.get('post_image')):
+        text = "A new post, right? Add text or image, or both ..."
+    else:
+        text = "Add or change text/image, or send the post"
+    
+    keyboard = [[
+        InlineKeyboardButton('Text', callback_data='post_ext'), 
+        InlineKeyboardButton('Image', callback_data='post_image')
+        ]]
+    
+    if context.user_data.get('post_text') or context.user_data.get('post_image'):
+        keyboard.append([InlineKeyboardButton('Send', callback_data='post_send')])
 
-async def bsky_post_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['text'] = update.message.text
-    await update.message.reply_text('Please, provide the image for the post, or type noimage to post without an image')
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return STATE_POST_KEYBOARD_CALLBACK
+
+async def bsky_post_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text('Please, provide the text for the post')
+    return STATE_POST_TEXT
+
+async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['post_text'] = update.message.text
+    return await bsky_post_keyboard(update, context)
+
+async def bsky_post_image(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text('Please, provide the image for the post')
     return STATE_POST_IMAGE
+
+async def bsky_post_image_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    if update.message.photo:
+        image = await update.message.photo[-1].get_file()
+        image_bytes = await image.download_as_bytearray()
+        image_base64 = base64.b64encode(image_bytes).decode('ascii')
+        context.user_data['post_image'] = image_base64
+
+    return await bsky_post_keyboard(update, context)
 
 async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
@@ -52,16 +83,14 @@ async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not auth_config or auth_config.Value != str(user_id):
         await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
         return ConversationHandler.END
-
-    text = context.user_data['text']
-
-    if update.message.photo:
-        image = await update.message.photo[-1].get_file()
-        image_bytes = await image.download_as_bytearray()
-        image_base64 = base64.b64encode(image_bytes).decode('ascii')
-    else:
-        image_base64 = None
     
+    text = context.user_data.get('post_text')
+    image_base64 = context.user_data.get('post_image')
+    if not text and not image_base64:
+        await update.message.reply_text('Please, try again and provide text or image.')
+        return ConversationHandler.END
+    context.user_data.clear()
+
     event = Event()
     event.eventType = EventType.Post
     event.data = EventData()
@@ -108,7 +137,7 @@ async def reply_to_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     post_id = int(update.message.text.split('_')[-1])
     context.user_data['post_id'] = post_id
     await update.message.reply_text('Please, provide the text for the reply')
-    return STATE_POST
+    return STATE_POST_TEXT
 
 async def send_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -227,13 +256,14 @@ def load(app: Application) -> None:
     app.add_handler(CommandHandler("set_authorized_user", set_authorized_user))
 
     post_handler = ConversationHandler(
-        entry_points=[CommandHandler("bluesky_post", bsky_post)],
+        entry_points=[CommandHandler("bluesky_post", bsky_post_keyboard)],
         states={
-            STATE_POST: [MessageHandler(filters.TEXT & ~filters.COMMAND, bsky_post_image)],
-            STATE_POST_IMAGE: [
-                MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_send),
-                MessageHandler(filters.TEXT & filters.Regex('^noimage$'), bsky_post_send)
-            ]
+            STATE_POST_KEYBOARD_CALLBACK: 
+                [CallbackQueryHandler(bsky_post_text, pattern="^post_text$"),
+                 CallbackQueryHandler(bsky_post_image, pattern="^post_image$"),
+                 CallbackQueryHandler(bsky_post_send, pattern="^post_send$")],
+            STATE_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bsky_post_text_keyboard)],
+            STATE_POST_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_image_keyboard)]
         },
         fallbacks=[CommandHandler("stop", stop)]
     )
@@ -244,7 +274,7 @@ def load(app: Application) -> None:
     reply_post_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^/reply_[0-9]+$'), reply_to_post)],
         states={
-            STATE_POST: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_reply)]
+            STATE_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_reply)]
         },
         fallbacks=[CommandHandler("stop", stop)]
     )

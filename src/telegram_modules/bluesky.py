@@ -263,7 +263,7 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     elif update_type == 'description':
         service.update_profile(description=text)
     elif update_type == 'image':
-        service.update_profile(image=image_base64)
+        service.update_profile(photo=image_base64)
     elif update_type == 'banner':
         service.update_profile(banner=image_base64)
         

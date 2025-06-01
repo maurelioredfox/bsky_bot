@@ -8,6 +8,7 @@ services:
       - BSKY_PASSWORD=${BSKY_PASSWORD}
       - TELEGRAM_TOKEN_BSKY=${TELEGRAM_TOKEN_BSKY}
       - ADMIN_ID=${ADMIN_ID}
+      - BSKY_BOT_DATABASE=${BSKY_BOT_DATABASE}
     build:
       context: .
       dockerfile: Dockerfile

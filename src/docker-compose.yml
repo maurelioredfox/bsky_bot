@@ -3,14 +3,14 @@ services:
   bskybottelegram:
     container_name: BskyTelegramBot
     restart: always
+    environment:
+      - BSKY_USERNAME=${BSKY_USERNAME}
+      - BSKY_PASSWORD=${BSKY_PASSWORD}
+      - TELEGRAM_TOKEN_BSKY=${TELEGRAM_TOKEN_BSKY}
+      - ADMIN_ID=${ADMIN_ID}
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - BSKY_USERNAME=${BSKY_USERNAME}
-        - BSKY_PASSWORD=${BSKY_PASSWORD}
-        - TELEGRAM_TOKEN_BSKY=${TELEGRAM_TOKEN_BSKY}
-        - ADMIN_ID=${ADMIN_ID}
     networks:
       - mongodb_default
 networks:

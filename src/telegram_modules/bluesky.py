@@ -5,11 +5,11 @@ from telegram.ext import CommandHandler, ContextTypes, ConversationHandler, Mess
 import os
 import base64
 
-from api.bsky_api import Event, EventType, EventData, handle_event
+from service.bluesky_service import BlueskyService
 from dal import db
 
 #flags
-STATE_POST_TEXT, STATE_POST_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(6)
+STATE_POST_TEXT, STATE_POST_IMAGE, STATE_ADD_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(7)
 
 async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user.id == int(os.getenv('ADMIN_ID')):
@@ -31,6 +31,14 @@ async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> N
 
 # region post
 
+def post_preview(context: ContextTypes.DEFAULT_TYPE):
+    return f'''
+This is a preview of your post:
+text: {context.user_data.get('post_text', 'No text')}
+images: {len(context.user_data.get('post_images', []))} images
+
+    '''
+
 async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
@@ -39,17 +47,20 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
     
     text = ""
-    if not (context.user_data.get('post_text') or context.user_data.get('post_image')):
-        text = "A new post, right? Add text or image, or both ..."
+    if not (context.user_data.get('post_text') or context.user_data.get('post_images')):
+        text = "A new post, great! Add text or image (or both)"
     else:
-        text = "Add or change text/image, or send the post"
+        text = post_preview(context) + "Add or change text/image, or send the post"
     
     keyboard = [[
         InlineKeyboardButton('Text', callback_data='post_text'), 
-        InlineKeyboardButton('Image', callback_data='post_image')
+        InlineKeyboardButton('Image (new)', callback_data='post_images')
         ]]
     
-    if context.user_data.get('post_text') or context.user_data.get('post_image'):
+    if context.user_data.get('post_images'):
+        keyboard.append([InlineKeyboardButton('Image (add)', callback_data='post_images_add')])
+    
+    if context.user_data.get('post_text') or context.user_data.get('post_images'):
         keyboard.append([InlineKeyboardButton('Send', callback_data='post_send')])
 
     if update.message:
@@ -66,41 +77,62 @@ async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_
     context.user_data['post_text'] = update.message.text
     return await bsky_post_keyboard(update, context)
 
-async def bsky_post_image(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text('Please, provide the image for the post')
+async def bsky_post_images(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.edit_message_text('Please, provide the image for the post, send one at a time, blame telegram API')
     return STATE_POST_IMAGE
 
-async def bsky_post_image_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def bsky_post_images_add(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.edit_message_text('Please, provide the image to add to the post')
+    return STATE_ADD_IMAGE
+
+async def bsky_post_images_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     if update.message.photo:
         image = await update.message.photo[-1].get_file()
         image_bytes = await image.download_as_bytearray()
         image_base64 = base64.b64encode(image_bytes).decode('ascii')
-        context.user_data['post_image'] = image_base64
+        context.user_data['post_images'] = [ image_base64 ]
 
     return await bsky_post_keyboard(update, context)
+
+async def bsky_post_images_keyboard_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message.photo:
+        image = await update.message.photo[-1].get_file()
+        image_bytes = await image.download_as_bytearray()
+        image_base64 = base64.b64encode(image_bytes).decode('ascii')
+        
+        if 'post_images' not in context.user_data:
+            context.user_data['post_images'] = []
+        
+        context.user_data['post_images'].append(image_base64)
+    
+    return await bsky_post_keyboard(update, context)
+
+response = '''
+Welcome, here's your ID: {userId}, send it to my creator so you can be allowed to post,
+meanwhile check what I can do:
+/bluesky_post: the basic, I will ask for image and/or text and write a post
+/update_profile: this allows to set Name, Description, Profile Picture or Banner
+/list_posts: I try to keep track of things I posted, this will list and allow to add replies or delete something
+/stop: if something broke or you want to stop what you're doing, this is the command
+'''
 
 async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     text = context.user_data.get('post_text')
-    image_base64 = context.user_data.get('post_image')
-    if not text and not image_base64:
+    images_base64 = context.user_data.get('post_images')
+    if not text and not images_base64:
         await update.message.reply_text('Please, try again and provide text or image.')
         return ConversationHandler.END
+    
     context.user_data.clear()
-
-    event = Event()
-    event.eventType = EventType.Post
-    event.data = EventData()
-    event.data.text = text
-    event.data.image = image_base64
-    await handle_event(event)
-
+    service = BlueskyService()
+    service.post(text, images_base64)
     await update.callback_query.edit_message_text('Post sent')
     return ConversationHandler.END
 
@@ -112,15 +144,16 @@ async def list_posts(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return
     
-    event = Event()
-    event.eventType = EventType.List
-    event.data = EventData()
-    event.data.id = user_id
-    await update.message.reply_text('Fetching posts...')
-    await handle_event(event) 
+    service = BlueskyService()
+    posts = service.list_posts()
+    if not posts:
+        await update.message.reply_text('No posts found')
+
+    posts_formatted = '\n-------------------\n'.join([f"{post.text}\n /reply_{post.id} /delete_{post.id}" for post in posts])
+    await update.message.reply_text(posts_formatted)
 
 # endregion
 
@@ -130,7 +163,7 @@ async def reply_to_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return
 
     if len(update.message.text.split('_')) < 2:
@@ -146,18 +179,14 @@ async def send_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return
 
     text = update.message.text
     post_id = context.user_data['post_id']
 
-    event = Event()
-    event.eventType = EventType.Reply
-    event.data = EventData()
-    event.data.text = text
-    event.data.id = post_id
-    await handle_event(event)
+    service = BlueskyService()
+    service.reply_to_post(post_id, text)
     await update.message.reply_text('Reply sent')
     return ConversationHandler.END
 
@@ -169,7 +198,7 @@ async def delete_post(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return
 
     if len(update.message.text.split('_')) < 2:
@@ -178,11 +207,8 @@ async def delete_post(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     
     post_id = int(update.message.text.split('_')[-1])
 
-    event = Event()
-    event.eventType = EventType.Delete
-    event.data = EventData()
-    event.data.id = post_id
-    await handle_event(event)
+    service = BlueskyService()
+    service.delete_post(post_id)
     await update.message.reply_text('Post deleted, probably')
 
 # endregion
@@ -193,7 +219,7 @@ async def update_profile(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     keyboard = [[
@@ -219,7 +245,7 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
         return ConversationHandler.END
 
     update_type = context.user_data['update']
@@ -231,20 +257,16 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         image_bytes = await image.download_as_bytearray()
         image_base64 = base64.b64encode(image_bytes).decode('ascii')
 
-    event = Event()
-    event.eventType = EventType.Profile_Update
-    event.data = EventData()
-    
+    service = BlueskyService()
     if update_type == 'name':
-        event.data.name = text
+        service.update_profile(name=text)
     elif update_type == 'description':
-        event.data.description = text
+        service.update_profile(description=text)
     elif update_type == 'image':
-        event.data.image = image_base64
+        service.update_profile(image=image_base64)
     elif update_type == 'banner':
-        event.data.banner = image_base64
-
-    await handle_event(event)
+        service.update_profile(banner=image_base64)
+        
     await update.message.reply_text('Update sent')
     return ConversationHandler.END
 
@@ -263,10 +285,12 @@ def load(app: Application) -> None:
         states={
             STATE_POST_KEYBOARD_CALLBACK: 
                 [CallbackQueryHandler(bsky_post_text, pattern="^post_text$"),
-                 CallbackQueryHandler(bsky_post_image, pattern="^post_image$"),
+                 CallbackQueryHandler(bsky_post_images, pattern="^post_images$"),
+                 CallbackQueryHandler(bsky_post_images_add, pattern="^post_images_add$"),
                  CallbackQueryHandler(bsky_post_send, pattern="^post_send$")],
             STATE_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bsky_post_text_keyboard)],
-            STATE_POST_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_image_keyboard)]
+            STATE_POST_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_images_keyboard)],
+            STATE_ADD_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_images_keyboard_add)]
         },
         fallbacks=[CommandHandler("stop", stop)]
     )

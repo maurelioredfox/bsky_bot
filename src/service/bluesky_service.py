@@ -97,7 +97,7 @@ class BlueskyService():
         post = db.Posts.objects(id=post_id).first()
         if not post:
             raise ValueError('Post not found')
-        self.client.delete_post(post.cid)
+        self.client.delete_post(post.uri)
         post.delete()
 
     def reply_to_post(self, post_id: int, text: str):

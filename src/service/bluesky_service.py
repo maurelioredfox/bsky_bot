@@ -1,16 +1,59 @@
 from io import BytesIO
 import os
-from atproto import Client, models
+import re as regex
+from atproto import Client, models, IdResolver
 from atproto.exceptions import BadRequestError
 import base64
 from dal import db
 from PIL import Image
+from typing import Optional
+
+def is_valid_bluesky_url(url: str) -> bool:
+    """Check if the given URL is a valid Bluesky post URL.
+
+    Args:
+        url (str): URL to check.
+    Returns:
+        bool: True if the URL is a valid Bluesky post URL, otherwise False.
+    """
+    bluesky_regex = r'^https?:\/\/bsky\.app\/profile\/[^\/]+\/post\/[^\/]+$'
+    return bool(regex.match(bluesky_regex, url))
 
 class BlueskyService():
     def __init__(self):
         self.client = Client()
+        self.resolver = IdResolver()
         self.client.login(os.environ['BSKY_USERNAME'], os.environ['BSKY_PASSWORD'])
 
+
+    def fetch_post(self, url: str) -> Optional[models.ComAtprotoRepoStrongRef.Main]:
+        """Fetch a post using its Bluesky URL.
+
+        Args:
+            client (Client): Authenticated Atproto client.
+            resolver (IdResolver): Resolver instance for DID lookup.
+            url (str): URL of the Bluesky post.
+        Returns:
+            :obj:`models.AppBskyFeedPost.Record`: Post if found, otherwise None.
+        """
+        try:
+            # Extract the handle and post rkey from the URL
+            url_parts = url.split('/')
+            handle = url_parts[4]  # Username in the URL
+            post_rkey = url_parts[6]  # Post Record Key in the URL
+
+            # Resolve the DID for the username
+            did = self.resolver.handle.resolve(handle)
+            if not did:
+                print(f'Could not resolve DID for handle "{handle}".')
+                return None
+
+            # Fetch the post record
+            return models.create_strong_ref(self.client.get_post(post_rkey, did))
+        except (ValueError, KeyError) as e:
+            print(f'Error fetching post for URL {url}: {e}')
+            return None
+    
     def update_profile(self, name: str = None, description: str = None, photo = None, banner = None):
         if not name and not description and not photo and not banner:
             raise ValueError('At least one field must be provided to update the profile')
@@ -62,33 +105,93 @@ class BlueskyService():
         posts = db.Posts.objects().order_by('-id')[:10]
         return posts
     
-    def post(self, text: str, photo):
+    def make_photo_post_content(self, photo, link):
+        """Create a post content with photos and an optional link."""
+        photos = []
+        aspect_ratios = []
+
+        for p in photo:
+            photo_data = base64.b64decode(p)
+            uploaded_photo = self.client.upload_blob(photo_data).blob
+            image: Image = Image.open(BytesIO(photo_data))
+            aspect_ratio = models.AppBskyEmbedDefs.AspectRatio(height=image.height, width=image.width)
+            aspect_ratios.append(aspect_ratio)
+            photos.append(uploaded_photo)
+        if link:
+            if is_valid_bluesky_url(link):
+                # If the link is a Bluesky post, fetch the post details
+                post_record = self.fetch_post(link)
+                if post_record:
+                    embed = models.AppBskyEmbedRecordWithMedia.Main(
+                        record=models.AppBskyEmbedRecord.Main(record=post_record),
+                        media=models.AppBskyEmbedImages.Main(
+                            images=[
+                                models.AppBskyEmbedImages.Image(
+                                    image=photo,
+                                    alt='',  # Optional alt text can be set if needed
+                                    aspect_ratio=aspect_ratio
+                                ) for photo, aspect_ratio in zip(photos, aspect_ratios)
+                            ]
+                        )
+                    )
+            else:
+                # If the link is not a Bluesky post, create an embed for the images with the link
+                embed = models.AppBskyEmbedImages.Main(
+                    images=[models.AppBskyEmbedImages.Image(
+                        image=photo,
+                        aspect_ratio=aspect_ratio
+                    ) for photo, aspect_ratio in zip(photos, aspect_ratios)],
+                    external=models.AppBskyEmbedExternal.Main(
+                        external=models.AppBskyEmbedExternal.External(
+                            uri=link,
+                            title=None,  # Optional title can be set if needed
+                            description=None  # Optional description can be set if needed
+                        )
+                    )
+                )
+        else:
+            # If there is no link, create an embed for the images
+            embed = models.AppBskyEmbedImages.Main(
+                images=[models.AppBskyEmbedImages.Image(
+                    image=photo,
+                    alt='',  # Optional alt text can be set if needed
+                    aspect_ratio=aspect_ratio
+                ) for photo, aspect_ratio in zip(photos, aspect_ratios)]
+            )
+
+        return embed
+        
+    def make_link_post_content(self, link: str):
+        """Create a post content with a link."""
+        if is_valid_bluesky_url(link):
+            # If the link is a Bluesky post, fetch the post details
+            post_record = self.fetch_post(link)
+            if post_record:
+                return models.AppBskyEmbedRecord.Main(record=post_record)
+        else:
+            # If the link is not a Bluesky post, create an embed for the link
+            return models.AppBskyEmbedExternal.Main(
+                external=models.AppBskyEmbedExternal.External(
+                    uri=link,
+                    title=None,  # Optional title can be set if needed
+                    description=None  # Optional description can be set if needed
+                )
+            )
+
+    def post(self, text: str, photo = None, link = None):
         if not text and not photo:
             raise ValueError('At least one field must be provided to create a post')
+        
+        embed = None
 
         if photo and len(photo) > 0:
-            
-            photos = []
-            aspect_ratios = []
+            if len(photo) > 4:
+                raise ValueError('You can only upload up to 4 photos in a single post')
+            embed = self.make_photo_post_content(photo, link)
+        elif link:
+            embed = self.make_link_post_content(link)
 
-            for p in photo:
-                # Decode the base64 encoded photo
-                photo_data = base64.b64decode(p)
-                image: Image = Image.open(BytesIO(photo_data))
-                aspect_ratio = models.AppBskyEmbedDefs.AspectRatio(height=image.height, width=image.width)
-                aspect_ratios.append(aspect_ratio)
-                photos.append(photo_data)
-
-
-            post = self.client.send_images(
-                text = text or "",
-                images = photos,
-                image_aspect_ratios = aspect_ratios
-            )
-            db.Posts(text=text, cid=post.cid, uri=post.uri).save()
-            return
-
-        post = self.client.send_post(text)
+        post = self.client.send_post(text, embed=embed)
         db.Posts(text=text, cid=post.cid, uri=post.uri).save()
 
     def delete_post(self, post_id: int):

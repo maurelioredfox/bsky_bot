@@ -9,7 +9,7 @@ from service.bluesky_service import BlueskyService
 from dal import db
 
 #flags
-STATE_POST_TEXT, STATE_POST_IMAGE, STATE_ADD_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(7)
+STATE_POST_TEXT, STATE_POST_REPOST, STATE_POST_IMAGE, STATE_ADD_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(8)
 
 async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user.id == int(os.getenv('ADMIN_ID')):
@@ -36,7 +36,13 @@ def post_preview(context: ContextTypes.DEFAULT_TYPE):
 This is a preview of your post:
 text: {context.user_data.get('post_text', 'No text')}
 images: {len(context.user_data.get('post_images', []))} images
+    '''
 
+def post_repost_preview(context: ContextTypes.DEFAULT_TYPE):
+    repost_url = context.user_data.get('post_repost', 'No repost URL')
+    return f'''
+reposting this post:
+{repost_url}
     '''
 
 async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -50,11 +56,16 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not (context.user_data.get('post_text') or context.user_data.get('post_images')):
         text = "A new post, great! Add text or image (or both)"
     else:
-        text = post_preview(context) + "Add or change text/image, or send the post"
+        text = post_preview(context)
+        if context.user_data.get('post_repost'):
+            text += post_repost_preview(context)
+        text += "Add or change text/image, or send the post"
     
     keyboard = [[
         InlineKeyboardButton('Text', callback_data='post_text'), 
         InlineKeyboardButton('Image (new)', callback_data='post_images')
+        ],[
+        InlineKeyboardButton('Quote Repost/Embed', callback_data='quote_repost'),
         ]]
     
     if context.user_data.get('post_images'):
@@ -75,6 +86,15 @@ async def bsky_post_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['post_text'] = update.message.text
+    return await bsky_post_keyboard(update, context)
+
+async def bsky_post_repost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.edit_message_text('Please, provide the post URL to quote repost')
+    return STATE_POST_REPOST
+
+async def bsky_post_repost_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    post_url = update.message.text
+    context.user_data['post_repost'] = post_url
     return await bsky_post_keyboard(update, context)
 
 async def bsky_post_images(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
@@ -130,9 +150,11 @@ async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text('Please, try again and provide text or image.')
         return ConversationHandler.END
     
+    link = context.user_data.get('post_repost')
+    
     context.user_data.clear()
     service = BlueskyService()
-    service.post(text, images_base64)
+    service.post(text, images_base64, link)
     await update.callback_query.edit_message_text('Post sent')
     return ConversationHandler.END
 
@@ -285,9 +307,11 @@ def load(app: Application) -> None:
         states={
             STATE_POST_KEYBOARD_CALLBACK: 
                 [CallbackQueryHandler(bsky_post_text, pattern="^post_text$"),
+                 CallbackQueryHandler(bsky_post_repost, pattern="^quote_repost$"),
                  CallbackQueryHandler(bsky_post_images, pattern="^post_images$"),
                  CallbackQueryHandler(bsky_post_images_add, pattern="^post_images_add$"),
                  CallbackQueryHandler(bsky_post_send, pattern="^post_send$")],
+            STATE_POST_REPOST: [MessageHandler(filters.TEXT & ~filters.COMMAND, bsky_post_repost_keyboard)],
             STATE_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bsky_post_text_keyboard)],
             STATE_POST_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_images_keyboard)],
             STATE_ADD_IMAGE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, bsky_post_images_keyboard_add)]

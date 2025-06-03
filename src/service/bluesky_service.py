@@ -194,6 +194,18 @@ class BlueskyService():
         post = self.client.send_post(text, embed=embed)
         db.Posts(text=text, cid=post.cid, uri=post.uri).save()
 
+    def repost(self, original_post_url: str):
+        if not is_valid_bluesky_url(original_post_url):
+            raise ValueError('Invalid Bluesky post URL')
+
+        post_record = self.fetch_post(original_post_url)
+        if not post_record:
+            raise ValueError('Post not found or could not be fetched')
+
+        # Create a repost
+        repost = self.client.repost(uri=post_record.uri, cid=post_record.cid)
+        db.Posts(text=f'retweet from this: {original_post_url}', cid=repost.cid, uri=repost.uri).save()
+
     def delete_post(self, post_id: int):
         if not post_id:
             raise ValueError('Post ID is required to delete a post')

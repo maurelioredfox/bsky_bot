@@ -1,4 +1,3 @@
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler,Application
 
@@ -9,7 +8,7 @@ from service.bluesky_service import BlueskyService
 from dal import db
 
 #flags
-STATE_POST_TEXT, STATE_POST_REPOST, STATE_POST_IMAGE, STATE_ADD_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE = range(8)
+STATE_POST_TEXT, STATE_POST_REPOST, STATE_POST_IMAGE, STATE_ADD_IMAGE, STATE_POST_KEYBOARD_CALLBACK, SELECT_WHAT_TO_UPDATE, UPDATE_TEXT, UPDATE_IMAGE, STATE_REPOST = range(9)
 
 async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user.id == int(os.getenv('ADMIN_ID')):
@@ -53,7 +52,8 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
     
     text = ""
-    if not (context.user_data.get('post_text') or context.user_data.get('post_images')):
+    if not (context.user_data.get('post_text') or 
+            context.user_data.get('post_images')):
         text = "A new post, great! Add text or image (or both)"
     else:
         text = post_preview(context)
@@ -65,7 +65,7 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         InlineKeyboardButton('Text', callback_data='post_text'), 
         InlineKeyboardButton('Image (new)', callback_data='post_images')
         ],[
-        InlineKeyboardButton('Quote Repost/Embed', callback_data='quote_repost'),
+        InlineKeyboardButton('Quote Post Link', callback_data='quote_repost'),
         ]]
     
     if context.user_data.get('post_images'):
@@ -93,6 +93,9 @@ async def bsky_post_repost(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return STATE_POST_REPOST
 
 async def bsky_post_repost_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.message.text.startswith('https://bsky.app/'):
+        await update.message.reply_text('ehhh, not a Bluesky post URL')
+        return await bsky_post_keyboard(update, context)
     post_url = update.message.text
     context.user_data['post_repost'] = post_url
     return await bsky_post_keyboard(update, context)
@@ -132,6 +135,7 @@ response = '''
 Welcome, here's your ID: {userId}, send it to my creator so you can be allowed to post,
 meanwhile check what I can do:
 /bluesky_post: the basic, I will ask for image and/or text and write a post
+/repost: repost a Bluesky post by URL
 /update_profile: this allows to set Name, Description, Profile Picture or Banner
 /list_posts: I try to keep track of things I posted, this will list and allow to add replies or delete something
 /stop: if something broke or you want to stop what you're doing, this is the command
@@ -294,6 +298,42 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 # endregion
 
+# region repost
+
+async def repost_command(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
+    if not auth_config or auth_config.Value != str(user_id):
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        return ConversationHandler.END
+    
+    await update.message.reply_text('Please, provide the Bluesky post URL to repost')
+    return STATE_REPOST
+
+async def handle_repost(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
+    if not auth_config or auth_config.Value != str(user_id):
+        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        return ConversationHandler.END
+    
+    if not update.message.text.startswith('https://bsky.app/'):
+        await update.message.reply_text('This doesn\'t look like a valid Bluesky post URL. Please provide a URL like https://bsky.app/profile/username/post/postid')
+        return STATE_REPOST
+    
+    try:
+        service = BlueskyService()
+        service.repost(update.message.text)
+        await update.message.reply_text('Post reposted successfully')
+    except ValueError as e:
+        await update.message.reply_text(f'Error: {str(e)}')
+    except Exception as e:
+        await update.message.reply_text(f'An unexpected error occurred: {str(e)}')
+    
+    return ConversationHandler.END
+
+# endregion
+
 async def stop(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text('Operation cancelled')
     return ConversationHandler.END
@@ -319,6 +359,15 @@ def load(app: Application) -> None:
         fallbacks=[CommandHandler("stop", stop)]
     )
     app.add_handler(post_handler)
+
+    repost_handler = ConversationHandler(
+        entry_points=[CommandHandler("repost", repost_command)],
+        states={
+            STATE_REPOST: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_repost)]
+        },
+        fallbacks=[CommandHandler("stop", stop)]
+    )
+    app.add_handler(repost_handler)
 
     app.add_handler(CommandHandler("list_posts", list_posts))
 

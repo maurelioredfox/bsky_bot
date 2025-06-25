@@ -1,7 +1,7 @@
 from io import BytesIO
 import os
 import re as regex
-from atproto import Client, models, IdResolver
+from atproto import AtUri, Client, models, IdResolver
 from atproto.exceptions import BadRequestError
 import base64
 from dal import db
@@ -227,3 +227,30 @@ class BlueskyService():
 
         reply_post = self.client.send_post(text, reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref))
         db.Posts(text=text, cid=reply_post.cid, uri=reply_post.uri, parent=post, root=root_post).save()
+
+    def add_to_list(self, username: str):
+        """Add a user to the Bluesky list."""
+        if not username:
+            raise ValueError('Username is required to add to the list')
+
+        # Check if the list exists
+        mod_list_uri = os.getenv("BLUESKY_LIST", "")
+        if not mod_list_uri:
+            raise ValueError('BLUESKY_LIST environment variable is not set')
+
+        # Resolve the DID for the username
+        user_to_add = self.resolver.handle.resolve(username)
+        if not user_to_add:
+            raise ValueError(f'Could not resolve DID for handle "{username}"')
+
+        # Resolve mod list owner
+        mod_list_owner = AtUri.from_str(mod_list_uri)
+
+        _ = self.client.app.bsky.graph.listitem.create(
+            mod_list_owner,
+            models.AppBskyGraphListitem.Record(
+                list=mod_list_uri,
+                subject=user_to_add,
+                created_at=self.client.get_current_time_iso(),
+            ),
+        )

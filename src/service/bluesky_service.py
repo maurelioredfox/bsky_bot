@@ -244,7 +244,7 @@ class BlueskyService():
             raise ValueError(f'Could not resolve DID for handle "{username}"')
 
         # Resolve mod list owner
-        mod_list_owner = AtUri.from_str(mod_list_uri)
+        mod_list_owner = AtUri.from_str(mod_list_uri).host
 
         _ = self.client.app.bsky.graph.listitem.create(
             mod_list_owner,

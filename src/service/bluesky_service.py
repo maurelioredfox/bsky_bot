@@ -7,6 +7,8 @@ import base64
 from dal import db
 from PIL import Image
 from typing import Optional
+import requests
+from typing import List, Dict
 
 def is_valid_bluesky_url(url: str) -> bool:
     """Check if the given URL is a valid Bluesky post URL.
@@ -19,6 +21,62 @@ def is_valid_bluesky_url(url: str) -> bool:
     bluesky_regex = r'^https?:\/\/bsky\.app\/profile\/[^\/]+\/post\/[^\/]+$'
     return bool(regex.match(bluesky_regex, url))
 
+def parse_mentions(text: str) -> List[Dict]:
+    spans = []
+    mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
+    text_bytes = text.encode("UTF-8")
+    for m in regex.finditer(mention_regex, text_bytes):
+        spans.append({
+            "start": m.start(1),
+            "end": m.end(1),
+            "handle": m.group(1)[1:].decode("UTF-8")
+        })
+    return spans
+
+def parse_urls(text: str) -> List[Dict]:
+    spans = []
+    url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+    text_bytes = text.encode("UTF-8")
+    for m in regex.finditer(url_regex, text_bytes):
+        spans.append({
+            "start": m.start(1),
+            "end": m.end(1),
+            "url": m.group(1).decode("UTF-8"),
+        })
+    return spans
+
+def parse_facets(text: str) -> List[Dict]:
+    facets = []
+    for m in parse_mentions(text):
+        resp = requests.get(
+            "https://bsky.social/xrpc/com.atproto.identity.resolveHandle",
+            params={"handle": m["handle"]},
+        )
+        if resp.status_code == 400:
+            continue
+        did = resp.json()["did"]
+        facets.append({
+            "index": {
+                "byteStart": m["start"],
+                "byteEnd": m["end"],
+            },
+            "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}],
+        })
+    for u in parse_urls(text):
+        facets.append({
+            "index": {
+                "byteStart": u["start"],
+                "byteEnd": u["end"],
+            },
+            "features": [
+                {
+                    "$type": "app.bsky.richtext.facet#link",
+                    "uri": u["url"],
+                }
+            ],
+        })
+    return facets
+
 class BlueskyService():
     def __init__(self):
         self.client = Client()
@@ -26,7 +84,7 @@ class BlueskyService():
         self.client.login(os.environ['BSKY_USERNAME'], os.environ['BSKY_PASSWORD'])
 
 
-    def fetch_post(self, url: str) -> Optional[models.ComAtprotoRepoStrongRef.Main]:
+    def fetch_post(self, url: str) -> Optional[models.ComAtprotoRepoStrongRef.Main] | Optional[models.ComAtprotoRepoStrongRef.Main]:
         """Fetch a post using its Bluesky URL.
 
         Args:
@@ -46,14 +104,20 @@ class BlueskyService():
             did = self.resolver.handle.resolve(handle)
             if not did:
                 print(f'Could not resolve DID for handle "{handle}".')
-                return None
+                return (None, None)
+            
+            post = self.client.get_post(post_rkey, did)
+
+            # check for a reply chain and root post
+            root_post = post.value.reply.root if post.value.reply else None
+            root_ref = models.create_strong_ref(root_post) if root_post else None
 
             # Fetch the post record
-            return models.create_strong_ref(self.client.get_post(post_rkey, did))
+            return models.create_strong_ref(post), root_ref
         except (ValueError, KeyError) as e:
             print(f'Error fetching post for URL {url}: {e}')
-            return None
-    
+            return (None, None)
+
     def update_profile(self, name: str = None, description: str = None, photo = None, banner = None):
         if not name and not description and not photo and not banner:
             raise ValueError('At least one field must be provided to update the profile')
@@ -104,8 +168,8 @@ class BlueskyService():
         #pick last 10
         posts = db.Posts.objects().order_by('-id')[:10]
         return posts
-    
-    def make_photo_post_content(self, photo, link):
+
+    def make_photo_post_content(self, photo, link: Optional[str] = None):
         """Create a post content with photos and an optional link."""
         photos = []
         aspect_ratios = []
@@ -120,7 +184,7 @@ class BlueskyService():
         if link:
             if is_valid_bluesky_url(link):
                 # If the link is a Bluesky post, fetch the post details
-                post_record = self.fetch_post(link)
+                post_record, _ = self.fetch_post(link)
                 if post_record:
                     embed = models.AppBskyEmbedRecordWithMedia.Main(
                         record=models.AppBskyEmbedRecord.Main(record=post_record),
@@ -165,7 +229,7 @@ class BlueskyService():
         """Create a post content with a link."""
         if is_valid_bluesky_url(link):
             # If the link is a Bluesky post, fetch the post details
-            post_record = self.fetch_post(link)
+            post_record, _ = self.fetch_post(link)
             if post_record:
                 return models.AppBskyEmbedRecord.Main(record=post_record)
         else:
@@ -177,8 +241,22 @@ class BlueskyService():
                     description=None  # Optional description can be set if needed
                 )
             )
+        
+    def make_reply_post_ref(self, reply_link: str):
+        """Create a post content for replying to another post."""
+        post_to_reply, root_post = self.fetch_post(reply_link)
+        if not post_to_reply:
+            raise ValueError('Post to reply to not found or could not be fetched')
+        
+        if not root_post:
+            root_post = post_to_reply
 
-    def post(self, text: str, photo = None, link = None):
+        parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post_to_reply.cid, uri=post_to_reply.uri)
+        root_ref = models.ComAtprotoRepoStrongRef.Main(cid=root_post.cid, uri=root_post.uri)
+
+        return models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
+
+    def post(self, text: str, photo = None, qrt_link: Optional[str] = None, respond_to: Optional[str] = None):
         if not text and not photo:
             raise ValueError('At least one field must be provided to create a post')
         
@@ -187,18 +265,24 @@ class BlueskyService():
         if photo and len(photo) > 0:
             if len(photo) > 4:
                 raise ValueError('You can only upload up to 4 photos in a single post')
-            embed = self.make_photo_post_content(photo, link)
-        elif link:
-            embed = self.make_link_post_content(link)
+            embed = self.make_photo_post_content(photo, qrt_link)
+        elif qrt_link:
+            embed = self.make_link_post_content(qrt_link)
 
-        post = self.client.send_post(text, embed=embed)
+        facets = parse_facets(text)
+
+        if respond_to:
+            reply_to = self.make_reply_post_ref(respond_to)
+            post = self.client.send_post(text, embed=embed, reply_to=reply_to, facets=facets)
+        else:
+            post = self.client.send_post(text, embed=embed, facets=facets)
         db.Posts(text=text, cid=post.cid, uri=post.uri).save()
 
     def repost(self, original_post_url: str):
         if not is_valid_bluesky_url(original_post_url):
             raise ValueError('Invalid Bluesky post URL')
 
-        post_record = self.fetch_post(original_post_url)
+        post_record, _ = self.fetch_post(original_post_url)
         if not post_record:
             raise ValueError('Post not found or could not be fetched')
 

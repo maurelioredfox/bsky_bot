@@ -12,7 +12,7 @@ STATE_POST_TEXT, STATE_POST_REPOST, STATE_POST_IMAGE, STATE_ADD_IMAGE, STATE_POS
 
 async def set_authorized_user(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user.id == int(os.getenv('ADMIN_ID')):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(update.effective_user.id))
+        await update.message.reply_text('these are not the droids you are looking for ')
         return
     if len(update.message.text.split()) < 2:
         await update.message.reply_text('Please, provide the user id')
@@ -44,11 +44,18 @@ reposting this post:
 {repost_url}
     '''
 
+def post_respond_preview(context: ContextTypes.DEFAULT_TYPE):
+    respond_url = context.user_data.get('post_respond_to', 'No respond URL')
+    return f'''
+responding to this post:
+{respond_url}
+    '''
+
 async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(user_id))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     text = ""
@@ -59,20 +66,24 @@ async def bsky_post_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = post_preview(context)
         if context.user_data.get('post_repost'):
             text += post_repost_preview(context)
+        if context.user_data.get('post_respond_to'):
+            text += post_respond_preview(context)
         text += "Add or change text/image, or send the post"
     
     keyboard = [[
         InlineKeyboardButton('Text', callback_data='post_text'), 
-        InlineKeyboardButton('Image (new)', callback_data='post_images')
+        InlineKeyboardButton('Image (new or restart)', callback_data='post_images')
         ],[
-        InlineKeyboardButton('Quote Post Link', callback_data='quote_repost'),
+        InlineKeyboardButton('Post Link for Quote Repost', callback_data='quote_repost'),
+        ],[
+        InlineKeyboardButton('Post Link for Responding', callback_data='response_repost'),
         ]]
     
     if context.user_data.get('post_images'):
-        keyboard.append([InlineKeyboardButton('Image (add)', callback_data='post_images_add')])
+        keyboard.append([InlineKeyboardButton('Image (add another)', callback_data='post_images_add')])
     
     if context.user_data.get('post_text') or context.user_data.get('post_images'):
-        keyboard.append([InlineKeyboardButton('Send', callback_data='post_send')])
+        keyboard.append([InlineKeyboardButton('Send :D', callback_data='post_send')])
 
     if update.message:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -89,7 +100,8 @@ async def bsky_post_text_keyboard(update: Update, context: ContextTypes.DEFAULT_
     return await bsky_post_keyboard(update, context)
 
 async def bsky_post_repost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text('Please, provide the post URL to quote repost')
+    context.user_data['link_is_for'] = update.callback_query.data
+    await update.callback_query.edit_message_text('Please, provide the post URL to qrt/respond')
     return STATE_POST_REPOST
 
 async def bsky_post_repost_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -97,15 +109,18 @@ async def bsky_post_repost_keyboard(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text('ehhh, not a Bluesky post URL')
         return await bsky_post_keyboard(update, context)
     post_url = update.message.text
-    context.user_data['post_repost'] = post_url
+    if context.user_data.get('link_is_for') == 'response_repost':
+        context.user_data['post_respond_to'] = post_url
+    else:
+        context.user_data['post_repost'] = post_url
     return await bsky_post_keyboard(update, context)
 
 async def bsky_post_images(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text('Please, provide the image for the post, send one at a time, blame telegram API')
+    await update.callback_query.edit_message_text('Please, provide the image for the post, one at a time, blame telegram API')
     return STATE_POST_IMAGE
 
 async def bsky_post_images_add(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.edit_message_text('Please, provide the image to add to the post')
+    await update.callback_query.edit_message_text('Please, provide the additional image to add to the post')
     return STATE_ADD_IMAGE
 
 async def bsky_post_images_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -131,10 +146,10 @@ async def bsky_post_images_keyboard_add(update: Update, context: ContextTypes.DE
     
     return await bsky_post_keyboard(update, context)
 
-response = '''
+response_welcome = '''
 Welcome, here's your ID: {userId}, send it to my creator so you can be allowed to post,
 meanwhile check what I can do:
-/bluesky_post: the basic, I will ask for image and/or text and write a post
+/bluesky_post: the basic, I will ask for image and/or text and write a post (can also QRT or reply to a post)
 /repost: repost a Bluesky post by URL
 /update_profile: this allows to set Name, Description, Profile Picture or Banner
 /list_posts: I try to keep track of things I posted, this will list and allow to add replies or delete something
@@ -145,7 +160,7 @@ async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     text = context.user_data.get('post_text')
@@ -154,11 +169,12 @@ async def bsky_post_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text('Please, try again and provide text or image.')
         return ConversationHandler.END
     
-    link = context.user_data.get('post_repost')
+    qrt_link = context.user_data.get('post_repost')
+    respond_to = context.user_data.get('post_respond_to')
     
     context.user_data.clear()
     service = BlueskyService()
-    service.post(text, images_base64, link)
+    service.post(text, images_base64, qrt_link, respond_to)
     await update.callback_query.edit_message_text('Post sent')
     return ConversationHandler.END
 
@@ -170,7 +186,7 @@ async def list_posts(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return
     
     service = BlueskyService()
@@ -183,48 +199,13 @@ async def list_posts(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 # endregion
 
-# region reply post
-
-async def reply_to_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
-    if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
-        return
-
-    if len(update.message.text.split('_')) < 2:
-        await update.message.reply_text('Please, use the link provided by the list_posts command')
-        return
-    
-    post_id = int(update.message.text.split('_')[-1])
-    context.user_data['post_id'] = post_id
-    await update.message.reply_text('Please, provide the text for the reply')
-    return STATE_POST_TEXT
-
-async def send_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
-    if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
-        return
-
-    text = update.message.text
-    post_id = context.user_data['post_id']
-
-    service = BlueskyService()
-    service.reply_to_post(post_id, text)
-    await update.message.reply_text('Reply sent')
-    return ConversationHandler.END
-
-# endregion
-
 # region delete post
 
 async def delete_post(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return
 
     if len(update.message.text.split('_')) < 2:
@@ -245,7 +226,7 @@ async def update_profile(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     keyboard = [[
@@ -271,7 +252,7 @@ async def send_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return ConversationHandler.END
 
     update_type = context.user_data['update']
@@ -304,7 +285,7 @@ async def repost_command(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     await update.message.reply_text('Please, provide the Bluesky post URL to repost')
@@ -314,7 +295,7 @@ async def handle_repost(update: Update, _: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
-        await update.message.reply_text(response.replace('{userId}', str(user_id)))
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return ConversationHandler.END
     
     if not update.message.text.startswith('https://bsky.app/'):
@@ -347,7 +328,7 @@ def load(app: Application) -> None:
         states={
             STATE_POST_KEYBOARD_CALLBACK: 
                 [CallbackQueryHandler(bsky_post_text, pattern="^post_text$"),
-                 CallbackQueryHandler(bsky_post_repost, pattern="^quote_repost$"),
+                 CallbackQueryHandler(bsky_post_repost, pattern="^(quote_repost|response_repost)$"),
                  CallbackQueryHandler(bsky_post_images, pattern="^post_images$"),
                  CallbackQueryHandler(bsky_post_images_add, pattern="^post_images_add$"),
                  CallbackQueryHandler(bsky_post_send, pattern="^post_send$")],
@@ -370,15 +351,6 @@ def load(app: Application) -> None:
     app.add_handler(repost_handler)
 
     app.add_handler(CommandHandler("list_posts", list_posts))
-
-    reply_post_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^/reply_[0-9]+$'), reply_to_post)],
-        states={
-            STATE_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_reply)]
-        },
-        fallbacks=[CommandHandler("stop", stop)]
-    )
-    app.add_handler(reply_post_handler)
 
     app.add_handler(MessageHandler(filters.Regex('^/delete_[0-9]+$'), delete_post))
 

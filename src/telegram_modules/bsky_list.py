@@ -11,9 +11,9 @@ list_exists = os.getenv("BLUESKY_LIST", "") != ""
 admin_id = int(os.getenv('ADMIN_ID'))
 
 async def add_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the process of adding a user to the Bluesky list."""
+    """Start the process of adding a user to the Bluesky list. (main admin command)"""
     if not update.effective_user.id == admin_id:
-        await update.message.reply_text('You are not authorized to use this command, your id is ' + str(update.effective_user.id))
+        await update.message.reply_text('These are not the droids you are looking for ')
     if not list_exists:
         await update.message.reply_text("BLUESKY_LIST environment variable is not set.")
         return ConversationHandler.END

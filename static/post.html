@@ -1,0 +1,46 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bluesky Post Form</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<script type="text/javascript">
+    const post = {
+        "text": "",
+        "images": []
+    }
+
+    Telegram.WebApp.ready();
+    Telegram.WebApp.MainButton.setText('Send Post').show().onClick(function () {
+        if(post.images.length > 4){
+            alert("Bluesky only allows 4 images per post.");
+            return;
+        }
+        console.log(post);
+        //Telegram.WebApp.sendData(JSON.stringify(post));
+        Telegram.WebApp.close();
+    });
+</script>
+<body style="background-color: #ffffff">
+    <h1>Create a Post</h1>
+    <form id="postForm">
+        <label for="postText">Post Text:</label><br>
+        <textarea id="postText" name="postText" rows="4" cols="50" onchange="post.text = this.value;"></textarea><br><br>
+        <label for="postImages">Upload Images (max 4):</label><br>
+        <input type="file" id="postImages" name="postImages" accept="image/*" multiple onchange="
+            post.images = [];
+            const files = this.files;
+            for(let i = 0; i < files.length && i < 4; i++){
+                const reader = new FileReader();
+                reader.onload = function(e){
+                    post.images.push(e.target.result);
+                }
+                reader.readAsDataURL(files[i]);
+            }
+        "><br><br>
+    </form>
+</body>
+<script type="text/javascript">
+    Telegram.WebApp.expand();
+</script>
+</html>

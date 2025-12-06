@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -12,11 +13,12 @@
 
     Telegram.WebApp.ready();
     Telegram.WebApp.MainButton.setText('Send Post').show().onClick(function () {
+        post.text = document.getElementById("postText").value;
+
         if(post.images.length > 4){
             alert("Bluesky only allows 4 images per post.");
             return;
         }
-        console.log(post);
         Telegram.WebApp.sendData(JSON.stringify(post));
         Telegram.WebApp.close();
     });

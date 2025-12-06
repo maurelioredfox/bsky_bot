@@ -1,46 +1,128 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Bluesky Post Form</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <meta charset="UTF-8" />
+  <title>Bluesky Post Uploader</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+<style>
+  body {
+    font-family: sans-serif;
+    padding: 16px;
+    background: var(--tg-theme-bg-color, #fff);
+    color: var(--tg-theme-text-color, #222);
+  }
+  .preview {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 100px);
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .preview img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #4444;
+  }
+  button {
+    margin-top: 12px;
+    padding: 10px 20px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: none;
+    background: var(--tg-theme-button-color, #0a84ff);
+    color: var(--tg-theme-button-text-color, #fff);
+  }
+</style>
 </head>
-<script type="text/javascript">
-    const post = {
-        "text": "",
-        "images": []
+<body>
+  <h2>Create Bluesky Post</h2>
+  <label>Text</label><br>
+  <textarea id="text" rows="4" style="width:100%;"></textarea>
+  <br><br>
+  <label>Select up to 4 images</label><br>
+  <input type="file" id="files" accept="image/*" multiple />
+  <div class="preview" id="preview"></div>
+  <p id="status"></p>
+
+  <script type="text/javascript">
+
+    const SUPABASE_URL = "https://iygjeuuyooorreoqdden.supabase.co";
+    const SUPABASE_PUBLIC_KEY = "sb_publishable_RUa4CMo1GM5gO-JS45thbA_Qa8FML_z";
+    const supa_client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY);
+
+    const filesInput = document.getElementById("files");
+    const preview = document.getElementById("preview");
+    const status = document.getElementById("status");
+
+    filesInput.addEventListener("change", () => {
+      preview.innerHTML = "";
+      const files = Array.from(filesInput.files).slice(0, 4);
+
+      files.forEach(f => {
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(f);
+        preview.appendChild(img);
+      });
+    });
+
+    async function compressImage(file) {
+      const options = {
+        maxWidthOrHeight: 1280,
+        initialQuality: 0.85,
+        fileType: "image/jpeg",
+        useWebWorker: true
+      };
+      return await imageCompression(file, options);
+    }
+
+    async function uploadFile(file) {
+      const name = `tg_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+      const { data, error } = await supa_client
+        .storage
+        .from("uploads")
+        .upload(name, file);
+      if (error) throw error;
+
+      const { data: urlData } = supa_client
+        .storage
+        .from("uploads")
+        .getPublicUrl(name);
+
+      return urlData.publicUrl;
     }
 
     Telegram.WebApp.ready();
-    Telegram.WebApp.MainButton.setText('Send Post').show().onClick(function () {
-        if(post.images.length > 4){
-            alert("Bluesky only allows 4 images per post.");
-            return;
-        }
-        console.log(post);
-        Telegram.WebApp.sendData(JSON.stringify(post));
-        Telegram.WebApp.close();
+    Telegram.WebApp.MainButton.setText('Send Post').show().onClick(async function () {
+      const allFiles = Array.from(filesInput.files).slice(0, 4);
+      const text = document.getElementById("text").value.trim();
+
+      status.textContent = "Processing images...";
+
+      const imageUrls = [];
+
+      for (let file of allFiles) {
+        const compressed = await compressImage(file);
+        status.textContent = `Uploading ${file.name}...`;
+        const url = await uploadFile(compressed);
+        imageUrls.push(url);
+      }
+
+      status.textContent = "Sending data to bot...";
+
+      Telegram.WebApp.sendData(JSON.stringify({
+        text: text,
+        images: imageUrls
+      }));
+      Telegram.WebApp.close();
     });
-</script>
-<body style="background-color: #ffffff">
-    <h1>Create a Post</h1>
-    <form id="postForm">
-        <label for="postText">Post Text:</label><br>
-        <textarea id="postText" name="postText" rows="4" cols="50" onchange="post.text = this.value;"></textarea><br><br>
-        <label for="postImages">Upload Images (max 4):</label><br>
-        <input type="file" id="postImages" name="postImages" accept="image/*" multiple onchange="
-            post.images = [];
-            const files = this.files;
-            for(let i = 0; i < files.length && i < 4; i++){
-                const reader = new FileReader();
-                reader.onload = function(e){
-                    post.images.push(e.target.result);
-                }
-                reader.readAsDataURL(files[i]);
-            }
-        "><br><br>
-    </form>
+
+  </script>
+
 </body>
 <script type="text/javascript">
-    Telegram.WebApp.expand();
+  Telegram.WebApp.expand();
 </script>
 </html>

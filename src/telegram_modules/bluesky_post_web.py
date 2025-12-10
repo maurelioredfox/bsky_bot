@@ -1,9 +1,9 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler,Application
+from telegram import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, WebAppInfo
+from telegram.ext import ContextTypes, MessageHandler, filters, Application
 
-import os
 import base64
 import json
+import requests
 
 from service.bluesky_service import BlueskyService
 from dal import db
@@ -19,46 +19,58 @@ meanwhile check what I can do:
 '''
 
 class WebPostData:
-    def __init__(self, text: str, image_data: str | None):
+    def __init__(self, text: str, image_urls: list):
         self.text = text
-        self.images = []
+        self.image_urls = image_urls
 
-async def handle_web_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def show_web_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
     if not auth_config or auth_config.Value != str(user_id):
         await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
         return
 
-    if len(context.args) < 1:
-        await update.message.reply_text('Something wrong happened.')
-        return
+    reply_markup = ReplyKeyboardMarkup.from_button(
+            KeyboardButton(
+                text="Make a post!",
+                web_app=WebAppInfo(url="https://maurelioredfox.github.io/bsky_bot/"),
+            )
+        )
 
+    await update.message.reply_text("Click the button below to open the Bluesky Post Web App:", reply_markup=reply_markup)
+
+async def handle_web_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #auth
+    user_id = update.effective_user.id
+    auth_config = db.Config.objects(Key = 'AuthorizedUser').first()
+    if not auth_config or auth_config.Value != str(user_id):
+        await update.message.reply_text(response_welcome.replace('{userId}', str(user_id)))
+        return
     try:
-        post_data_json = ' '.join(context.args)
-        post_data_dict = json.loads(post_data_json)
+        data = json.loads(update.effective_message.web_app_data.data)
         post_data = WebPostData(
-            text=post_data_dict.get('text', ''),
-            image_data=post_data_dict.get('image_data')
+            text=data.get('text', ''),
+            image_urls=data.get('images', [])
         )
-    except json.JSONDecodeError:
-        await update.message.reply_text('Something wrong happened.')
-        return
 
-    bluesky_service = BlueskyService()
-    images = []
-    if post_data.image_data:
-        image_bytes = base64.b64decode(post_data.image_data)
-        images.append(image_bytes)
+        images = []
+        if post_data.image_urls and len(post_data.image_urls) > 0:
+            for url in post_data.image_urls:
+                # download image and parse to base64
+                response = requests.get(url)
+                image_bytes = base64.b64encode(response.content).decode('utf-8')
+                images.append(image_bytes)
+        
+        service = BlueskyService()
+        service.post(post_data.text, images, None, None)
 
-    try:
-        post_response = await bluesky_service.create_post(
-            text=post_data.text,
-            images=images if images else None
+        await update.message.reply_text(
+            f'Post created successfully!',
+            reply_markup=ReplyKeyboardRemove()
         )
-        await update.message.reply_text(f'Post created successfully! View it at: {post_response["post_url"]}')
     except Exception as e:
-        await update.message.reply_text(f'Failed to create post: {str(e)}')
+        await update.message.reply_text(f'An unexpected error occurred: {str(e)}', reply_markup=ReplyKeyboardRemove())
 
 def load(app: Application) -> None:
+    app.add_handler(MessageHandler(filters.Command("bluesky_post_web"), show_web_button))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_post))

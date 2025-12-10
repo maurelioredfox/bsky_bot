@@ -1,4 +1,5 @@
 import os
+from telegram import Update
 from telegram.ext import ApplicationBuilder
 import telegram_modules.bluesky_profile as bluesky_profile
 import telegram_modules.bsky_list as bsky_list
@@ -14,7 +15,7 @@ def main():
     bluesky_post.load(app)
     bluesky_profile.load(app)
 
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
